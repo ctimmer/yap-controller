@@ -120,11 +120,11 @@ class GetCommand :
         if request["method"] == "set_process_value" :
             result = self.set_power_level (request["params"])
         elif request["method"] == "update_settings" :
-            rquest ["params"]["temperature_update"] = \
+            request ["params"]["temperature_update"] = \
                 "current_temperature" in request ["params"]
             self.poller.message_set ("pid_settings", request["params"])
         elif request["method"] == "shutdown" :
-            poller.shutdown ()
+            self.poller.shutdown ()
 
     def set_power_level (self, params) :
         #print ("set_power_level:", params)
@@ -201,7 +201,7 @@ class YAPController :
         if process_value == self.process_value :
             return self.duty_cycle
         self.process_value = process_value
-        self.set_duty_cycle (get_duty_cycle (self.process_value))
+        self.set_duty_cycle (self.get_duty_cycle (self.process_value))
 
     def get_duty_cycle (self ,
                         process_value) :
