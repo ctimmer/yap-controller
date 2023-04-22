@@ -21,7 +21,8 @@ At some point the temperature stablizes, in this example 210 degrees.
 Because this is not the target temperature, the duty cycle set point is changed to the value at the intersection of the stable temperature (42.57564)
 
 ![YAPover3](images/YAPover3.png)
-Changing the duty cycle set point redraws the plot line. This yealds a new duty cycle (52.89203) for the current temperature (210). The cycle repeats itself until the measured temperature stablizes at the target temperature.
+
+Changing the duty cycle set point redraws the plot line. This yeilds a new duty cycle (52.89203) for the current temperature (210). The cycle repeats itself until the measured temperature stablizes at the target temperature.
 
 The following code was used to generate these graphs:
 ```python
