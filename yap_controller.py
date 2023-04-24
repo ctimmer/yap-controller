@@ -35,12 +35,14 @@
 #
 
 import sys
+import gc
 import network
 import usocket as socket
 
 import ujson as json
 import math
 
+MACHINE_FREQ = 240000000
 UDP_PORT = 5010
 
 #---------------------------------------------------------------------------
@@ -163,38 +165,45 @@ class YAPController :
                   #) :
         self.looper = looper
         self.target_PV = target_PV
-        self.tan_per_cent = 0.9
-        self.pi_over_2 = None
-        self.tan_factor = None
+        self.pi_over_2_low = None
+        self.pi_over_2_high = None
+#        self.clip_factor = 0.9
+        self.clip_factor_low = 0.9
+        self.clip_factor_high = 0.9
         self.process_value = None
-        self.PV_low = None
-        self.PV_high = None
-        self.PV_low_range = None
-        self.PV_high_range = None
+        self.control_range_low = None
+        self.control_range_high = None
         self.new_settings (SP, **kwargs)
         self.duty_cycle = -1
         self.set_duty_cycle (SP)
 
     def new_settings (self ,
                       duty_cycle = None ,
-                      PV_low = None ,
-                      PV_high = None ,
-                      tan_per_cent = None
+                      control_range_low = None ,
+                      control_range_high = None ,
+                      clip_factor = None ,
+                      clip_factor_low = None ,
+                      clip_factor_high = None
                       ) :
         #print ("new_settings:")
         if not duty_cycle is None :
             self.duty_cycle = duty_cycle
-        if not PV_low is None :
-            self.PV_low = PV_low
-        if not PV_high is None :
-            self.PV_high = PV_high
-        if not tan_per_cent is None :
-            self.tan_per_cent = tan_per_cent
-        self.PV_low_range = self.duty_cycle - self.PV_low
-        self.PV_high_range = self.PV_high - self.duty_cycle
+        if control_range_low is not None :
+            self.control_range_low = control_range_low
+        if control_range_high is not None :
+            self.control_range_high = control_range_high
 
-        self.pi_over_2 = (math.pi / 2.0) * self.tan_per_cent
-        self.tan_factor = 1.0 / math.tan (self.pi_over_2)
+        if clip_factor is not None :
+            self.clip_factor_low = clip_factor
+            self.clip_factor_high = clip_factor
+        if clip_factor_low is not None :
+            self.clip_factor_low = clip_factor_low
+        if clip_factor_high is not None :
+            self.clip_factor_high = clip_factor_high
+        self.pi_over_2_low = (math.pi / 2.0) * self.clip_factor_low
+        self.tan_factor_low = 1.0 / math.tan (self.pi_over_2_low)
+        self.pi_over_2_high = (math.pi / 2.0) * self.clip_factor_high
+        self.tan_factor_high = 1.0 / math.tan (self.pi_over_2_high)
 
     def new_PV (self, process_value) :
         #print ("new_PV:", process_value)
@@ -205,19 +214,21 @@ class YAPController :
 
     def get_duty_cycle (self ,
                         process_value) :
-        if process_value <= self.PV_low :
+        if process_value <= self.control_range_low :
             return 100.0
-        if process_value >= self.PV_high :
+        if process_value >= self.control_range_high :
             return 0.0                        # should probably not happen
         # Calculate new duty cycle
         if process_value < self.target_PV :
             temp_per_cent = (self.target_PV - process_value) \
-                            / (self.target_PV - self.PV_low)
+                            / (self.target_PV - self.control_range_low)
+            radian = self.pi_over_2_low * temp_per_cent
+            duty_pc = math.tan (radian) * self.tan_factor_low
         else :
             temp_per_cent = (process_value - self.target_PV) \
-                            / (self.PV_high - self.target_PV)
-        radian = self.pi_over_2 * temp_per_cent
-        duty_pc = math.tan (radian) * self.tan_factor
+                            / (self.control_range_high - self.target_PV)
+            radian = self.pi_over_2_high * temp_per_cent
+            duty_pc = math.tan (radian) * self.tan_factor_high
         if process_value < self.target_PV :
             new_duty = self.duty_cycle + (100 - self.duty_cycle) * duty_pc
         else :
@@ -240,11 +251,11 @@ class YAPController :
         if not start_pv is None :
             pv = start_pv
         else :
-            pv = self.PV_low - 10
+            pv = self.control_range_low - 10
         if not end_pv is None :
             pv_last = end_pv
         else :
-            pv_last = self.PV_high + 10
+            pv_last = self.control_range_high + 10
 
         print ("# Start of process_value/duty_cycle plot data", file=out_file)
         while pv <= pv_last :
@@ -261,8 +272,8 @@ class YAPController :
             out_file = sys.stdout
 
         process_value = None
-        start_pv = self.PV_low - 10
-        end_pv = self.PV_high + 30      # room for labels
+        start_pv = self.control_range_low - 10
+        end_pv = self.control_range_high + 30      # room for labels
         duty_cycle = None
         if 'process_value' in kwargs :
             process_value = kwargs ['process_value']
@@ -284,34 +295,29 @@ class YAPController :
         if process_value is not None :
             duty_cycle = self.get_duty_cycle (process_value)
             dc_offset = 3              # for graph crosshair formatting
-            pv_offset = int ((start_pv - end_pv) * (dc_offset / 100))
+            #pv_offset = int ((start_pv - end_pv) * (dc_offset / 100))
             print ("$PV << EOD", file=out_file)
             print (process_value, (duty_cycle - dc_offset), file=out_file)
             print (process_value, (duty_cycle + dc_offset), file=out_file)
-            #print (self.target_PV, duty_cycle, file=out_file)
             print ('EOD', file=out_file)
-            #print ("$PVDC << EOD", file=out_file)
-            #print ((process_value - pv_offset), duty_cycle, file=out_file)
-            #print ((process_value + pv_offset), duty_cycle, file=out_file)
-            #print ('EOD', file=out_file)
             print ("$Inter << EOD", file=out_file)
             print (process_value, duty_cycle, file=out_file)
             print (self.target_PV, duty_cycle, file=out_file)
             print ('EOD', file=out_file)
 
         print ("$SP << EOD", file=out_file)
-        print (self.PV_low, self.duty_cycle, file=out_file)
-        print (self.PV_high, self.duty_cycle, file=out_file)
+        print (self.control_range_low, self.duty_cycle, file=out_file)
+        print (self.control_range_high, self.duty_cycle, file=out_file)
         print ('EOD', file=out_file)
 
         print ("$lCR << EOD", file=out_file)
-        print (self.PV_low, 0, file=out_file)
-        print (self.PV_low, 100, file=out_file)
+        print (self.control_range_low, 0, file=out_file)
+        print (self.control_range_low, 100, file=out_file)
         print ('EOD', file=out_file)
         
         print ("$hCR << EOD", file=out_file)
-        print (self.PV_high, 0, file=out_file)
-        print (self.PV_high, 100, file=out_file)
+        print (self.control_range_high, 0, file=out_file)
+        print (self.control_range_high, 100, file=out_file)
         print ('EOD', file=out_file)
 
         print ('set print "-"', file=out_file)
@@ -337,7 +343,6 @@ class YAPController :
         print ('  $tPV ls 2 title "Target Temp" with lines , ', file=out_file, end='')
         if not process_value is None :
             print ('  $PV ls 5 title "Measured Temp" with lines ,', file=out_file, end='')
-            #print ('  $PVDC ls 5 notitle with lines ,', file=out_file, end='')
             print ('  $Inter ls 5 dt 5 notitle with lines', file=out_file, end='')
         print ('', file=out_file)
 
@@ -345,30 +350,39 @@ class YAPController :
         print ('pause -1', file=out_file)
         return duty_cycle
 
-    def dump (self) :
-        print ("Low:", self.PV_low,
-               "Target:", self.target_PV,
-                "High:", self.PV_high)
+    def __str__ (self) :
+        print ("\nCurrent Settings #################")
+        print ("Low:", self.control_range_low)
+        print ("Target:", self.target_PV)
+        print ("High:", self.control_range_high)
+        print ("process_value:", self.process_value)
 
 ## end YAPController
 
 #------------------------------------------------------------------<<<<<<<
 #
 if __name__ == "__main__" :
+    if MACHINE_FREQ > 0 :
+        machine.freq(240000000)
     yap = YAPController (None ,
                       225.0 ,
                       30.0 ,
-                      PV_low = 200.0 ,
-                      PV_high = 235.0)
+                      control_range_low = 200.0 ,
+                      control_range_high = 235.0)
     #yap.dump ()
     #yap.new_PV (70.0)
+    new_duty_cycle = None
     with open ("YAPover1.gnuplot", "w") as fil :
         print (yap.gnuplot (out_file = fil))
+    #---- process_value stabilizes at 210 degrees
     with open ("YAPover2.gnuplot", "w") as fil :
         new_duty_cycle = yap.gnuplot (process_value=210, out_file = fil)
     print (new_duty_cycle)
+    #---- Adjust duty cycle set point
     yap.set_duty_cycle (new_duty_cycle)
+    #---- New plot
     with open ("YAPover3.gnuplot", "w") as fil :
         new_duty_cycle = yap.gnuplot (process_value=210, out_file = fil)
     print (new_duty_cycle)
+    print (yap)
         #print (yap.gnuplot (out_file = fil), end='')
